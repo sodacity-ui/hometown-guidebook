@@ -2,6 +2,10 @@ import { cities as fallbackCities } from './cities';
 
 const SUPABASE_URL = 'https://iitvfgyngunlbyumcxmu.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_iCygNTEBYUQp1oqBa0p36A_r92b6y_3';
+const headers = {
+  apikey: SUPABASE_PUBLISHABLE_KEY,
+  Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+};
 
 function normalizePlace(row) {
   return {
@@ -25,30 +29,45 @@ function normalizePlace(row) {
     trade: row.tradeoffs || [],
     scores: row.editorial_scores || {},
     budget: Number(row.budget_band ?? 0),
+    seoTitle: row.seo_title,
+    seoDescription: row.seo_description,
+    content: row.editorial_content || {},
+    faqs: Array.isArray(row.faqs) ? row.faqs : [],
+    editorialUpdatedAt: row.editorial_updated_at,
     lastVerifiedAt: row.last_verified_at,
   };
 }
 
+async function supabaseFetch(path) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers,
+    next: { revalidate: 300 },
+  });
+  if (!response.ok) throw new Error(`Supabase request failed: ${response.status}`);
+  return response.json();
+}
+
 export async function getCities() {
   try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/places?select=*&is_published=eq.true&order=name.asc`,
-      {
-        headers: {
-          apikey: SUPABASE_PUBLISHABLE_KEY,
-          Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        next: { revalidate: 300 },
-      }
-    );
-
-    if (!response.ok) throw new Error(`Supabase request failed: ${response.status}`);
-    const rows = await response.json();
+    const rows = await supabaseFetch('places?select=*&is_published=eq.true&order=name.asc');
     if (!Array.isArray(rows) || rows.length === 0) return fallbackCities;
     return rows.map(normalizePlace);
   } catch (error) {
     console.error('Using fallback city data because Supabase could not be reached.', error);
     return fallbackCities;
+  }
+}
+
+export async function getCityBySlug(slug) {
+  try {
+    const rows = await supabaseFetch(`places?select=*&is_published=eq.true&slug=eq.${encodeURIComponent(slug)}&limit=1`);
+    if (!rows?.[0]) return fallbackCities.find((c) => c.slug === slug) || null;
+    const city = normalizePlace(rows[0]);
+    const sources = await supabaseFetch(`sources?select=title,url,publisher,source_type,data_period,last_checked_at&place_id=eq.${city.id}&order=source_type.asc`);
+    return { ...city, sources: Array.isArray(sources) ? sources : [] };
+  } catch (error) {
+    console.error(`Using fallback data for ${slug}.`, error);
+    return fallbackCities.find((c) => c.slug === slug) || null;
   }
 }
 
@@ -59,18 +78,8 @@ export async function getCitiesBySlug() {
 
 export async function getBusinessCategories() {
   try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/business_categories?select=*&is_active=eq.true&order=name.asc`,
-      {
-        headers: {
-          apikey: SUPABASE_PUBLISHABLE_KEY,
-          Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        next: { revalidate: 300 },
-      }
-    );
-    if (!response.ok) return [];
-    return response.json();
+    const rows = await supabaseFetch('business_categories?select=*&is_active=eq.true&order=name.asc');
+    return Array.isArray(rows) ? rows : [];
   } catch {
     return [];
   }
